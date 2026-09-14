@@ -5,7 +5,7 @@
   "config_flow": true,
   "documentation": "https://www.home-assistant.io/integrations/perplexity_web",
   "issue_tracker": "https://github.com/veronoicc/perplexity-web-ha/issues",
-  "integration_type": "hub",
+  "integration_type": "service",
   "iot_class": "cloud_polling",
-  "version": "1.1.1"
+  "version": "1.2.0"
 }

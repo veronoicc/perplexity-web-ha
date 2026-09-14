@@ -36,7 +36,20 @@ async def async_setup_entry(
 ) -> None:
     """Set up Perplexity conversation entities."""
     client: PerplexityClient = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PerplexityWebConversationEntity(entry, client)])
+    entities: list[PerplexityWebConversationEntity] = []
+
+    subentries = getattr(entry, "subentries", None)
+    if subentries:
+        for subentry in subentries.values():
+            if getattr(subentry, "subentry_type", None) == "conversation":
+                entities.append(
+                    PerplexityWebConversationEntity(entry, client, subentry=subentry)
+                )
+
+    if not entities:
+        entities.append(PerplexityWebConversationEntity(entry, client, subentry=None))
+
+    async_add_entities(entities)
 
 
 class PerplexityWebConversationEntity(
@@ -46,20 +59,45 @@ class PerplexityWebConversationEntity(
 
     _attr_has_entity_name = True
 
-    def __init__(self, entry: ConfigEntry, client: PerplexityClient) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        client: PerplexityClient,
+        subentry: Any = None,
+    ) -> None:
         """Initialize the conversation entity."""
         self.entry = entry
         self.client = client
+        self.subentry = subentry
         self.history: dict[str, list[dict[str, str]]] = {}
-        self._attr_unique_id = entry.entry_id
-        self._attr_name = entry.title
-        self._attr_device_info = dr.DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Perplexity AI",
-            model="Perplexity Web",
-            entry_type=dr.DeviceEntryType.SERVICE,
-        )
+
+        if subentry:
+            self._attr_unique_id = f"{entry.entry_id}_{subentry.subentry_id}"
+            self._attr_name = subentry.title
+            self._attr_device_info = dr.DeviceInfo(
+                identifiers={(DOMAIN, subentry.subentry_id)},
+                name=subentry.title,
+                manufacturer="Perplexity AI",
+                model="Perplexity Web",
+                entry_type=dr.DeviceEntryType.SERVICE,
+            )
+        else:
+            self._attr_unique_id = entry.entry_id
+            self._attr_name = entry.title
+            self._attr_device_info = dr.DeviceInfo(
+                identifiers={(DOMAIN, entry.entry_id)},
+                name=entry.title,
+                manufacturer="Perplexity AI",
+                model="Perplexity Web",
+                entry_type=dr.DeviceEntryType.SERVICE,
+            )
+
+    @property
+    def _options(self) -> dict[str, Any]:
+        """Return options dictionary for this agent."""
+        if self.subentry and getattr(self.subentry, "data", None):
+            return dict(self.subentry.data)
+        return dict(self.entry.options)
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -80,7 +118,7 @@ class PerplexityWebConversationEntity(
         self, user_input: conversation.ConversationInput
     ) -> str:
         """Render prompt template with Home Assistant context."""
-        raw_prompt = self.entry.options.get(CONF_PROMPT, DEFAULT_PROMPT)
+        raw_prompt = self._options.get(CONF_PROMPT, DEFAULT_PROMPT)
         if not raw_prompt:
             return ""
 
@@ -153,8 +191,8 @@ class PerplexityWebConversationEntity(
                 content = getattr(item, "content", None) or str(item)
                 messages.append({"role": str(role), "content": str(content)})
 
-        model_preference = self.entry.options.get(CONF_MODEL_PREFERENCE, DEFAULT_MODEL)
-        search_focus = self.entry.options.get(CONF_SEARCH_FOCUS, DEFAULT_SEARCH_FOCUS)
+        model_preference = self._options.get(CONF_MODEL_PREFERENCE, DEFAULT_MODEL)
+        search_focus = self._options.get(CONF_SEARCH_FOCUS, DEFAULT_SEARCH_FOCUS)
         params = {
             "model_preference": model_preference,
             "search_focus": search_focus,

@@ -28,6 +28,29 @@
       "already_configured": "Account is already configured."
     }
   },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "Add conversation agent"
+      },
+      "step": {
+        "set_options": {
+          "title": "Conversation Agent Settings",
+          "description": "Configure conversation agent settings and system prompt.",
+          "data": {
+            "name": "Agent Name",
+            "prompt": "System Prompt",
+            "model_preference": "Model",
+            "search_focus": "Search Focus",
+            "reasoning": "Enable Reasoning"
+          },
+          "data_description": {
+            "prompt": "Instructions for the AI agent"
+          }
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

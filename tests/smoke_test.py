@@ -440,6 +440,79 @@ async def test_init_setup_and_unload() -> None:
     print("test_init_setup_and_unload: PASSED")
 
 
+async def test_subentry_flow_and_conversation() -> None:
+    """Test PerplexitySubentryFlowHandler and subentry conversation entity."""
+    from custom_components.perplexity_web.config_flow import (
+        PerplexitySubentryFlowHandler,
+    )
+    from custom_components.perplexity_web.conversation import (
+        PerplexityWebConversationEntity,
+    )
+
+    hass = MagicMock()
+    hass.data = {}
+
+    entry = MagicMock()
+    entry.entry_id = "entry_sub_123"
+    entry.data = {CONF_SESSION_TOKEN: "tok_sub"}
+
+    handler = PerplexitySubentryFlowHandler()
+    handler.hass = hass
+    handler.source = "user"
+    handler._get_entry = MagicMock(return_value=entry)
+    handler.async_create_entry = MagicMock(
+        side_effect=lambda title, data: {
+            "type": "create_entry",
+            "title": title,
+            "data": data,
+        }
+    )
+
+    mock_session = MagicMock()
+    mock_session.closed = False
+
+    with (
+        patch(
+            "custom_components.perplexity_web.config_flow.async_get_clientsession",
+            return_value=mock_session,
+        ),
+        patch(
+            "custom_components.perplexity_web.config_flow.PerplexityClient"
+        ) as mock_client_cls,
+    ):
+        mock_client = MagicMock()
+        mock_client.get_available_models = AsyncMock(return_value=[])
+        mock_client_cls.return_value = mock_client
+
+        res = await handler.async_step_set_options(
+            user_input={
+                CONF_NAME: "Research Specialist",
+                CONF_PROMPT: "Be rigorous and cite sources.",
+                CONF_MODEL_PREFERENCE: "sonar",
+                CONF_SEARCH_FOCUS: "scholar",
+                CONF_REASONING: True,
+            }
+        )
+        assert res["type"] == "create_entry"
+        assert res["title"] == "Research Specialist"
+        assert res["data"][CONF_PROMPT] == "Be rigorous and cite sources."
+        assert res["data"][CONF_SEARCH_FOCUS] == "scholar"
+
+    subentry = MagicMock(
+        subentry_id="sub_789",
+        subentry_type="conversation",
+        title="Research Specialist",
+        data=res["data"],
+    )
+    client = MagicMock(spec=PerplexityClient)
+    entity = PerplexityWebConversationEntity(entry, client, subentry=subentry)
+    assert entity._attr_unique_id == "entry_sub_123_sub_789"
+    assert entity._attr_name == "Research Specialist"
+    assert entity._options[CONF_PROMPT] == "Be rigorous and cite sources."
+    assert entity._options[CONF_SEARCH_FOCUS] == "scholar"
+    print("test_subentry_flow_and_conversation: PASSED")
+
+
 async def main() -> None:
     """Run all smoke tests."""
     test_search_config_item()
@@ -448,6 +521,7 @@ async def main() -> None:
     await test_conversation_entity()
     await test_config_and_options_flow()
     await test_init_setup_and_unload()
+    await test_subentry_flow_and_conversation()
     print("ALL TESTS PASSED SUCCESSFULLY!")
 
 

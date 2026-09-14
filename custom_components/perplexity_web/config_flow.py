@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 import voluptuous as vol
+
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -31,6 +32,21 @@ from .const import (
     DOMAIN,
     SEARCH_FOCUS_OPTIONS,
 )
+
+try:
+    from homeassistant.config_entries import (
+        ConfigSubentryFlow,
+        SubentryFlowResult,
+    )
+
+    HAS_SUBENTRIES = True
+except ImportError:
+    HAS_SUBENTRIES = False
+
+    class ConfigSubentryFlow:  # type: ignore[no-redef]
+        """Fallback when ConfigSubentryFlow is not available."""
+
+    SubentryFlowResult = Any  # type: ignore[assignment,misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,13 +88,10 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
 
             if existing_account:
                 if existing_account in accounts:
-                    return self.async_create_entry(
+                    return self._create_entry_helper(
                         title=name or f"Perplexity ({existing_account})",
-                        data={
-                            CONF_EMAIL: existing_account,
-                            CONF_SESSION_TOKEN: accounts[existing_account],
-                        },
-                        options=DEFAULT_OPTIONS,
+                        email=existing_account,
+                        session_token=accounts[existing_account],
                     )
                 errors["base"] = "invalid_auth"
             else:
@@ -146,13 +159,10 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._email, otp, self._csrf_token
                 )
 
-                return self.async_create_entry(
+                return self._create_entry_helper(
                     title=self._name or f"Perplexity ({self._email})",
-                    data={
-                        CONF_EMAIL: self._email,
-                        CONF_SESSION_TOKEN: session_token,
-                    },
-                    options=DEFAULT_OPTIONS,
+                    email=self._email,
+                    session_token=session_token,
                 )
             except PerplexityAuthError as err:
                 _LOGGER.error("OTP verification failed: %s", err)
@@ -168,11 +178,134 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"email": self._email or ""},
         )
 
+    def _create_entry_helper(
+        self, title: str, email: str, session_token: str
+    ) -> ConfigFlowResult:
+        """Helper to create entry with subentries if supported."""
+        extra_kwargs: dict[str, Any] = {}
+        if HAS_SUBENTRIES:
+            extra_kwargs["subentries"] = [
+                {
+                    "subentry_type": "conversation",
+                    "data": DEFAULT_OPTIONS.copy(),
+                    "title": "Perplexity Web",
+                    "unique_id": None,
+                }
+            ]
+        else:
+            extra_kwargs["options"] = DEFAULT_OPTIONS.copy()
+
+        return self.async_create_entry(
+            title=title,
+            data={
+                CONF_EMAIL: email,
+                CONF_SESSION_TOKEN: session_token,
+            },
+            **extra_kwargs,
+        )
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentries supported by this integration."""
+        if not HAS_SUBENTRIES:
+            return {}
+        return {
+            "conversation": PerplexitySubentryFlowHandler,
+        }
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get the options flow for this handler."""
         return PerplexityOptionsFlow()
+
+
+class PerplexitySubentryFlowHandler(ConfigSubentryFlow):
+    """Flow for managing conversation subentries."""
+
+    @property
+    def _is_new(self) -> bool:
+        """Return if this is a new subentry."""
+        return getattr(self, "source", None) == "user"
+
+    async def async_step_set_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Set conversation agent options."""
+        errors: dict[str, str] = {}
+
+        if user_input is None:
+            if self._is_new:
+                options = DEFAULT_OPTIONS.copy()
+            else:
+                reconfigure_subentry = getattr(self, "_get_reconfigure_subentry", None)
+                if reconfigure_subentry:
+                    options = (reconfigure_subentry().data or {}).copy()
+                else:
+                    options = DEFAULT_OPTIONS.copy()
+        else:
+            if self._is_new:
+                title = user_input.pop(CONF_NAME, "Perplexity Web")
+                return self.async_create_entry(
+                    title=title,
+                    data=user_input,
+                )
+            return self.async_update_and_abort(
+                self._get_entry(),
+                self._get_reconfigure_subentry(),
+                data=user_input,
+            )
+
+        entry = self._get_entry()
+        session = async_get_clientsession(self.hass)
+        token = entry.data.get(CONF_SESSION_TOKEN, "")
+        client = PerplexityClient(session, token)
+
+        current_prompt = options.get(CONF_PROMPT, DEFAULT_PROMPT)
+        current_reasoning = options.get(CONF_REASONING, DEFAULT_REASONING)
+        current_model = options.get(CONF_MODEL_PREFERENCE, DEFAULT_MODEL)
+        current_focus = options.get(CONF_SEARCH_FOCUS, DEFAULT_SEARCH_FOCUS)
+
+        model_options: dict[str, str] = {}
+        try:
+            available_models = await client.get_available_models()
+            for item in available_models:
+                model_id = item.best_model(current_reasoning) or item.label
+                desc = f" ({item.description})" if item.description else ""
+                model_options[model_id] = f"{item.label}{desc}"
+        except Exception as err:
+            _LOGGER.warning("Could not fetch available models: %s", err)
+
+        if not model_options:
+            model_options[DEFAULT_MODEL] = "Default (Experimental)"
+
+        if current_model not in model_options:
+            model_options[current_model] = current_model
+
+        schema: dict[Any, Any] = {}
+        if self._is_new:
+            schema[vol.Required(CONF_NAME, default="Perplexity Web")] = str
+
+        schema[vol.Optional(CONF_PROMPT, default=current_prompt)] = TemplateSelector()
+        schema[vol.Optional(CONF_MODEL_PREFERENCE, default=current_model)] = vol.In(
+            model_options
+        )
+        schema[vol.Optional(CONF_SEARCH_FOCUS, default=current_focus)] = vol.In(
+            SEARCH_FOCUS_OPTIONS
+        )
+        schema[vol.Optional(CONF_REASONING, default=current_reasoning)] = bool
+
+        return self.async_show_form(
+            step_id="set_options",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+        )
+
+    async_step_user = async_step_set_options
+    async_step_reconfigure = async_step_set_options
 
 
 class PerplexityOptionsFlow(OptionsFlow):
