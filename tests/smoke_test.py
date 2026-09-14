@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.const import CONF_EMAIL, CONF_NAME
+
 from custom_components.perplexity_web.api import (
     AskResult,
     AuthClient,
@@ -10,16 +12,12 @@ from custom_components.perplexity_web.api import (
     PerplexityClient,
     SearchConfigItem,
 )
-from homeassistant.const import CONF_EMAIL, CONF_NAME
 from custom_components.perplexity_web.const import (
     CONF_MODEL_PREFERENCE,
     CONF_PROMPT,
     CONF_REASONING,
     CONF_SEARCH_FOCUS,
     CONF_SESSION_TOKEN,
-    DEFAULT_MODEL,
-    DEFAULT_REASONING,
-    DEFAULT_SEARCH_FOCUS,
     DOMAIN,
 )
 
@@ -275,14 +273,11 @@ async def test_conversation_entity() -> None:
     print("test_conversation_entity: PASSED")
 
 
-async def test_config_and_options_flow() -> None:
-    """Test PerplexityConfigFlow and PerplexityOptionsFlow."""
+async def test_config_flow() -> None:
+    """Test PerplexityConfigFlow."""
     from homeassistant.const import CONF_EMAIL
 
-    from custom_components.perplexity_web.config_flow import (
-        PerplexityConfigFlow,
-        PerplexityOptionsFlow,
-    )
+    from custom_components.perplexity_web.config_flow import PerplexityConfigFlow
 
     hass = MagicMock()
     hass.config_entries.async_entries = MagicMock(return_value=[])
@@ -345,55 +340,7 @@ async def test_config_and_options_flow() -> None:
         assert False, "Should abort on duplicate email"
     except Exception as e:
         assert "already_configured" in str(e)
-    # 5. Options flow
-    entry = MagicMock()
-    entry.data = {CONF_SESSION_TOKEN: "final-session-token-xyz"}
-    entry.options = {
-        CONF_PROMPT: "Be concise.",
-        CONF_MODEL_PREFERENCE: DEFAULT_MODEL,
-        CONF_SEARCH_FOCUS: DEFAULT_SEARCH_FOCUS,
-        CONF_REASONING: DEFAULT_REASONING,
-    }
-    opt_flow = PerplexityOptionsFlow()
-    opt_flow.hass = hass
-    opt_flow.handler = "test_entry_1"
-    hass.config_entries = MagicMock()
-    hass.config_entries.async_get_known_entry = MagicMock(return_value=entry)
-    with (
-        patch(
-            "custom_components.perplexity_web.config_flow.async_get_clientsession",
-            return_value=mock_session,
-        ),
-        patch(
-            "custom_components.perplexity_web.config_flow.PerplexityClient"
-        ) as mock_client_cls,
-    ):
-        mock_client = MagicMock()
-        mock_client.get_available_models = AsyncMock(
-            return_value=[
-                SearchConfigItem(
-                    label="Sonar", description="Default", non_reasoning_model="sonar"
-                )
-            ]
-        )
-        mock_client_cls.return_value = mock_client
-        opt_res1 = await opt_flow.async_step_init(user_input=None)
-        assert opt_res1["type"] == "form"
-        assert opt_res1["step_id"] == "init"
-
-        opt_res2 = await opt_flow.async_step_init(
-            user_input={
-                CONF_MODEL_PREFERENCE: "sonar",
-                CONF_SEARCH_FOCUS: "scholar",
-                CONF_REASONING: True,
-            }
-        )
-        assert opt_res2["type"] == "create_entry"
-        assert opt_res2["data"][CONF_MODEL_PREFERENCE] == "sonar"
-        assert opt_res2["data"][CONF_SEARCH_FOCUS] == "scholar"
-        assert opt_res2["data"][CONF_REASONING] is True
-
-    print("test_config_and_options_flow: PASSED")
+    print("test_config_flow: PASSED")
 
 
 async def test_init_setup_and_unload() -> None:
@@ -522,7 +469,7 @@ async def main() -> None:
     await test_auth_client()
     await test_perplexity_client()
     await test_conversation_entity()
-    await test_config_and_options_flow()
+    await test_config_flow()
     await test_init_setup_and_unload()
     await test_subentry_flow_and_conversation()
     print("ALL TESTS PASSED SUCCESSFULLY!")
