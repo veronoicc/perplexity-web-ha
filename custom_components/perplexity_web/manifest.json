@@ -1,0 +1,11 @@
+{
+  "domain": "perplexity_web",
+  "name": "Perplexity Web",
+  "codeowners": ["@veronoicc"],
+  "config_flow": true,
+  "documentation": "https://www.home-assistant.io/integrations/perplexity_web",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": ["aiohttp"],
+  "version": "1.0.0"
+}
