@@ -10,7 +10,7 @@ from custom_components.perplexity_web.api import (
     PerplexityClient,
     SearchConfigItem,
 )
-from homeassistant.const import CONF_NAME
+from homeassistant.const import CONF_EMAIL, CONF_NAME
 from custom_components.perplexity_web.const import (
     CONF_MODEL_PREFERENCE,
     CONF_PROMPT,
@@ -18,7 +18,6 @@ from custom_components.perplexity_web.const import (
     CONF_SEARCH_FOCUS,
     CONF_SESSION_TOKEN,
     DEFAULT_MODEL,
-    DEFAULT_PROMPT,
     DEFAULT_REASONING,
     DEFAULT_SEARCH_FOCUS,
     DOMAIN,
@@ -286,8 +285,11 @@ async def test_config_and_options_flow() -> None:
     )
 
     hass = MagicMock()
+    hass.config_entries.async_entries = MagicMock(return_value=[])
+    hass.config_entries.async_entry_for_domain_unique_id = MagicMock(return_value=None)
     flow = PerplexityConfigFlow()
     flow.hass = hass
+    flow.context = {}
     mock_session = MagicMock()
     mock_session.closed = False
     with patch(
@@ -331,27 +333,18 @@ async def test_config_and_options_flow() -> None:
             assert res3["type"] == "create_entry"
             assert res3["title"] == "Perplexity (user@example.com)"
             assert res3["data"][CONF_SESSION_TOKEN] == "final-session-token-xyz"
-    # 4. Multi-agent: create second agent reusing existing account
-    existing_entry = MagicMock()
-    existing_entry.data = {
-        CONF_EMAIL: "user@example.com",
-        CONF_SESSION_TOKEN: "final-session-token-xyz",
-    }
-    hass.config_entries.async_entries = MagicMock(return_value=[existing_entry])
-
+    # 4. Duplicate account aborts
     flow2 = PerplexityConfigFlow()
     flow2.hass = hass
-    res_reuse = await flow2.async_step_user(
-        user_input={
-            "existing_account": "user@example.com",
-            CONF_NAME: "Research Agent",
-        }
+    flow2.context = {}
+    hass.config_entries.async_entry_for_domain_unique_id = MagicMock(
+        return_value=MagicMock()
     )
-    assert res_reuse["type"] == "create_entry"
-    assert res_reuse["title"] == "Research Agent"
-    assert res_reuse["data"][CONF_SESSION_TOKEN] == "final-session-token-xyz"
-    assert res_reuse["options"][CONF_PROMPT] == DEFAULT_PROMPT
-
+    try:
+        await flow2.async_step_user(user_input={CONF_EMAIL: "user@example.com"})
+        assert False, "Should abort on duplicate email"
+    except Exception as e:
+        assert "already_configured" in str(e)
     # 5. Options flow
     entry = MagicMock()
     entry.data = {CONF_SESSION_TOKEN: "final-session-token-xyz"}
@@ -450,11 +443,19 @@ async def test_subentry_flow_and_conversation() -> None:
     )
 
     hass = MagicMock()
-    hass.data = {}
+    entry1 = MagicMock()
+    entry1.entry_id = "entry_1"
+    entry1.data = {CONF_EMAIL: "primary@example.com", CONF_SESSION_TOKEN: "tok_1"}
 
-    entry = MagicMock()
-    entry.entry_id = "entry_sub_123"
-    entry.data = {CONF_SESSION_TOKEN: "tok_sub"}
+    entry2 = MagicMock()
+    entry2.entry_id = "entry_2"
+    entry2.data = {CONF_EMAIL: "secondary@example.com", CONF_SESSION_TOKEN: "tok_2"}
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_entries = MagicMock(return_value=[entry1, entry2])
+
+    entry = entry1
 
     handler = PerplexitySubentryFlowHandler()
     handler.hass = hass
@@ -486,6 +487,7 @@ async def test_subentry_flow_and_conversation() -> None:
 
         res = await handler.async_step_set_options(
             user_input={
+                "account": "entry_2",
                 CONF_NAME: "Research Specialist",
                 CONF_PROMPT: "Be rigorous and cite sources.",
                 CONF_MODEL_PREFERENCE: "sonar",
@@ -493,6 +495,7 @@ async def test_subentry_flow_and_conversation() -> None:
                 CONF_REASONING: True,
             }
         )
+        assert handler.handler == "entry_2"
         assert res["type"] == "create_entry"
         assert res["title"] == "Research Specialist"
         assert res["data"][CONF_PROMPT] == "Be rigorous and cite sources."
@@ -506,7 +509,7 @@ async def test_subentry_flow_and_conversation() -> None:
     )
     client = MagicMock(spec=PerplexityClient)
     entity = PerplexityWebConversationEntity(entry, client, subentry=subentry)
-    assert entity._attr_unique_id == "entry_sub_123_sub_789"
+    assert entity._attr_unique_id == "entry_1_sub_789"
     assert entity._attr_name == "Research Specialist"
     assert entity._options[CONF_PROMPT] == "Be rigorous and cite sources."
     assert entity._options[CONF_SEARCH_FOCUS] == "scholar"

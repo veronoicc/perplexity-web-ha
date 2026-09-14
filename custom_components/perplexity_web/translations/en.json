@@ -2,11 +2,9 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configure Perplexity Agent",
-        "description": "Enter an agent name and choose an existing account or enter an email to sign in.",
+        "title": "Add Perplexity Account",
+        "description": "Enter your Perplexity account email to sign in.",
         "data": {
-          "name": "Agent Name",
-          "existing_account": "Existing Account",
           "email": "Email"
         }
       },
@@ -19,7 +17,6 @@
       }
     },
     "error": {
-      "account_or_email_required": "Please select an existing account or enter an email address.",
       "cannot_connect": "Failed to connect to Perplexity.",
       "invalid_auth": "Invalid verification code or authentication failed.",
       "unknown": "Unexpected error."
@@ -36,8 +33,9 @@
       "step": {
         "set_options": {
           "title": "Conversation Agent Settings",
-          "description": "Configure conversation agent settings and system prompt.",
+          "description": "Configure conversation agent settings and system prompt for {account}.",
           "data": {
+            "account": "Account",
             "name": "Agent Name",
             "prompt": "System Prompt",
             "model_preference": "Model",

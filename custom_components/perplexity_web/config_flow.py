@@ -65,86 +65,47 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """Initialize flow."""
-        self._name: str | None = None
         self._email: str | None = None
         self._csrf_token: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: Request email and dispatch OTP, or reuse existing account."""
+        """Step 1: Request email and dispatch OTP to add a Perplexity account."""
         errors: dict[str, str] = {}
 
-        accounts: dict[str, str] = {
-            entry.data[CONF_EMAIL]: entry.data[CONF_SESSION_TOKEN]
-            for entry in self.hass.config_entries.async_entries(DOMAIN)
-            if entry.data.get(CONF_SESSION_TOKEN) and entry.data.get(CONF_EMAIL)
-        }
-
         if user_input is not None:
-            name = user_input.get(CONF_NAME)
-            self._name = name
-            existing_account = user_input.get("existing_account")
+            email = user_input[CONF_EMAIL].strip().lower()
 
-            if existing_account:
-                if existing_account in accounts:
-                    return self._create_entry_helper(
-                        title=name or f"Perplexity ({existing_account})",
-                        email=existing_account,
-                        session_token=accounts[existing_account],
-                    )
-                errors["base"] = "invalid_auth"
-            else:
-                email = (user_input.get(CONF_EMAIL) or "").strip()
-                if not email:
-                    errors["base"] = "account_or_email_required"
-                else:
-                    session = async_get_clientsession(self.hass)
-                    auth_client = AuthClient(session)
+            await self.async_set_unique_id(email)
+            self._abort_if_unique_id_configured()
 
-                    try:
-                        csrf_token = await auth_client.get_csrf_token()
-                        await auth_client.send_email_otp(email, csrf_token)
-                        self._email = email
-                        self._csrf_token = csrf_token
-                        return await self.async_step_otp()
-                    except PerplexityAuthError as err:
-                        _LOGGER.error("Perplexity auth error: %s", err)
-                        errors["base"] = "cannot_connect"
-                    except Exception as err:
-                        _LOGGER.exception("Unexpected error during auth: %s", err)
-                        errors["base"] = "unknown"
+            session = async_get_clientsession(self.hass)
+            auth_client = AuthClient(session)
 
-        if accounts:
-            account_options = {
-                "": "None (add new account)",
-                **{acc: acc for acc in accounts},
-            }
-            data_schema = vol.Schema(
-                {
-                    vol.Optional(CONF_NAME, default="Perplexity Web"): str,
-                    vol.Optional("existing_account"): vol.In(account_options),
-                    vol.Optional(CONF_EMAIL): str,
-                }
-            )
-        else:
-            data_schema = vol.Schema(
-                {
-                    vol.Optional(CONF_NAME, default="Perplexity Web"): str,
-                    vol.Required(CONF_EMAIL): str,
-                }
-            )
+            try:
+                csrf_token = await auth_client.get_csrf_token()
+                await auth_client.send_email_otp(email, csrf_token)
+                self._email = email
+                self._csrf_token = csrf_token
+                return await self.async_step_otp()
+            except PerplexityAuthError as err:
+                _LOGGER.error("Perplexity auth error: %s", err)
+                errors["base"] = "cannot_connect"
+            except Exception as err:
+                _LOGGER.exception("Unexpected error during auth: %s", err)
+                errors["base"] = "unknown"
 
         return self.async_show_form(
             step_id="user",
-            data_schema=data_schema,
+            data_schema=vol.Schema({vol.Required(CONF_EMAIL): str}),
             errors=errors,
         )
 
     async def async_step_otp(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2: Verify OTP code and finish setup."""
+        """Step 2: Verify OTP code and finish account setup."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -159,10 +120,26 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._email, otp, self._csrf_token
                 )
 
-                return self._create_entry_helper(
-                    title=self._name or f"Perplexity ({self._email})",
-                    email=self._email,
-                    session_token=session_token,
+                extra_kwargs: dict[str, Any] = {}
+                if HAS_SUBENTRIES:
+                    extra_kwargs["subentries"] = [
+                        {
+                            "subentry_type": "conversation",
+                            "data": DEFAULT_OPTIONS.copy(),
+                            "title": "Perplexity Web",
+                            "unique_id": None,
+                        }
+                    ]
+                else:
+                    extra_kwargs["options"] = DEFAULT_OPTIONS.copy()
+
+                return self.async_create_entry(
+                    title=f"Perplexity ({self._email})",
+                    data={
+                        CONF_EMAIL: self._email,
+                        CONF_SESSION_TOKEN: session_token,
+                    },
+                    **extra_kwargs,
                 )
             except PerplexityAuthError as err:
                 _LOGGER.error("OTP verification failed: %s", err)
@@ -176,32 +153,6 @@ class PerplexityConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required("otp"): str}),
             errors=errors,
             description_placeholders={"email": self._email or ""},
-        )
-
-    def _create_entry_helper(
-        self, title: str, email: str, session_token: str
-    ) -> ConfigFlowResult:
-        """Helper to create entry with subentries if supported."""
-        extra_kwargs: dict[str, Any] = {}
-        if HAS_SUBENTRIES:
-            extra_kwargs["subentries"] = [
-                {
-                    "subentry_type": "conversation",
-                    "data": DEFAULT_OPTIONS.copy(),
-                    "title": "Perplexity Web",
-                    "unique_id": None,
-                }
-            ]
-        else:
-            extra_kwargs["options"] = DEFAULT_OPTIONS.copy()
-
-        return self.async_create_entry(
-            title=title,
-            data={
-                CONF_EMAIL: email,
-                CONF_SESSION_TOKEN: session_token,
-            },
-            **extra_kwargs,
         )
 
     @classmethod
@@ -248,6 +199,9 @@ class PerplexitySubentryFlowHandler(ConfigSubentryFlow):
                     options = DEFAULT_OPTIONS.copy()
         else:
             if self._is_new:
+                chosen_account = user_input.pop("account", None)
+                if chosen_account:
+                    self.handler = chosen_account
                 title = user_input.pop(CONF_NAME, "Perplexity Web")
                 return self.async_create_entry(
                     title=title,
@@ -286,6 +240,16 @@ class PerplexitySubentryFlowHandler(ConfigSubentryFlow):
             model_options[current_model] = current_model
 
         schema: dict[Any, Any] = {}
+
+        # If multiple accounts exist, allow picking the account
+        accounts = {
+            e.entry_id: e.data.get(CONF_EMAIL, e.title)
+            for e in self.hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(CONF_SESSION_TOKEN)
+        }
+        if self._is_new and len(accounts) > 1:
+            schema[vol.Required("account", default=entry.entry_id)] = vol.In(accounts)
+
         if self._is_new:
             schema[vol.Required(CONF_NAME, default="Perplexity Web")] = str
 
@@ -298,10 +262,12 @@ class PerplexitySubentryFlowHandler(ConfigSubentryFlow):
         )
         schema[vol.Optional(CONF_REASONING, default=current_reasoning)] = bool
 
+        current_email = entry.data.get(CONF_EMAIL, "")
         return self.async_show_form(
             step_id="set_options",
             data_schema=vol.Schema(schema),
             errors=errors,
+            description_placeholders={"account": current_email},
         )
 
     async_step_user = async_step_set_options
