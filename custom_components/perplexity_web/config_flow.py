@@ -247,7 +247,7 @@ class PerplexitySubentryFlowHandler(ConfigSubentryFlow):
             for e in self.hass.config_entries.async_entries(DOMAIN)
             if e.data.get(CONF_SESSION_TOKEN)
         }
-        if self._is_new and len(accounts) > 1:
+        if self._is_new and accounts:
             schema[vol.Required("account", default=entry.entry_id)] = vol.In(accounts)
 
         if self._is_new:
