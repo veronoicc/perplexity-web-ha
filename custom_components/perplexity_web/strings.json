@@ -2,9 +2,11 @@
   "config": {
     "step": {
       "user": {
-        "title": "Authenticate with Perplexity",
-        "description": "Enter your Perplexity account email to receive a sign-in code.",
+        "title": "Configure Perplexity Agent",
+        "description": "Enter an agent name and choose an existing account or enter an email to sign in.",
         "data": {
+          "name": "Agent Name",
+          "existing_account": "Existing Account",
           "email": "Email"
         }
       },
@@ -17,6 +19,7 @@
       }
     },
     "error": {
+      "account_or_email_required": "Please select an existing account or enter an email address.",
       "cannot_connect": "Failed to connect to Perplexity.",
       "invalid_auth": "Invalid verification code or authentication failed.",
       "unknown": "Unexpected error."
@@ -29,11 +32,15 @@
     "step": {
       "init": {
         "title": "Perplexity Options",
-        "description": "Configure model preference, search focus, and reasoning.",
+        "description": "Configure system prompt, model preference, search focus, and reasoning.",
         "data": {
+          "prompt": "System Prompt",
           "model_preference": "Model",
           "search_focus": "Search Focus",
           "reasoning": "Enable Reasoning"
+        },
+        "data_description": {
+          "prompt": "Instructions for the AI agent"
         }
       }
     }

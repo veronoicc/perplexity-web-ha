@@ -11,14 +11,17 @@ from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import intent
+from homeassistant.helpers import template
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import ulid
 
 from .api import PerplexityApiError, PerplexityClient
 from .const import (
     CONF_MODEL_PREFERENCE,
+    CONF_PROMPT,
     CONF_SEARCH_FOCUS,
     DEFAULT_MODEL,
+    DEFAULT_PROMPT,
     DEFAULT_SEARCH_FOCUS,
     DOMAIN,
 )
@@ -42,7 +45,6 @@ class PerplexityWebConversationEntity(
     """Perplexity Web conversation agent entity."""
 
     _attr_has_entity_name = True
-    _attr_name = None
 
     def __init__(self, entry: ConfigEntry, client: PerplexityClient) -> None:
         """Initialize the conversation entity."""
@@ -50,6 +52,7 @@ class PerplexityWebConversationEntity(
         self.client = client
         self.history: dict[str, list[dict[str, str]]] = {}
         self._attr_unique_id = entry.entry_id
+        self._attr_name = entry.title
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -73,22 +76,55 @@ class PerplexityWebConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
+    async def _async_render_prompt(
+        self, user_input: conversation.ConversationInput
+    ) -> str:
+        """Render prompt template with Home Assistant context."""
+        raw_prompt = self.entry.options.get(CONF_PROMPT, DEFAULT_PROMPT)
+        if not raw_prompt:
+            return ""
+
+        user_name: str | None = None
+        if user_input.context and user_input.context.user_id:
+            user = await self.hass.auth.async_get_user(user_input.context.user_id)
+            if user:
+                user_name = user.name
+
+        try:
+            return template.Template(raw_prompt, self.hass).async_render(
+                {
+                    "ha_name": self.hass.config.location_name,
+                    "user_name": user_name,
+                },
+                parse_result=False,
+            )
+        except template.TemplateError as err:
+            _LOGGER.error("Error rendering prompt template: %s", err)
+            return raw_prompt
+
     def _format_history_query(
-        self, messages: list[dict[str, str]], latest_prompt: str
+        self,
+        messages: list[dict[str, str]],
+        latest_prompt: str,
+        system_prompt: str | None = None,
     ) -> str:
         """Format multi-turn conversation history into a single query string."""
-        if not messages:
-            return latest_prompt
-
         formatted_lines: list[str] = []
+
+        if system_prompt and system_prompt.strip():
+            formatted_lines.append(f"System: {system_prompt.strip()}")
+
         for msg in messages:
             role = msg.get("role", "user").capitalize()
             content = msg.get("content", "").strip()
             if content:
                 formatted_lines.append(f"{role}: {content}")
 
-        formatted_lines.append(f"User: {latest_prompt}")
-        return "\n\n".join(formatted_lines)
+        if formatted_lines:
+            formatted_lines.append(f"User: {latest_prompt}")
+            return "\n\n".join(formatted_lines)
+
+        return latest_prompt
 
     async def _async_handle_message(
         self,
@@ -126,7 +162,10 @@ class PerplexityWebConversationEntity(
             "is_incognito": True,
         }
 
-        query_str = self._format_history_query(messages, user_input.text)
+        system_prompt = await self._async_render_prompt(user_input)
+        query_str = self._format_history_query(
+            messages, user_input.text, system_prompt=system_prompt
+        )
 
         intent_response = intent.IntentResponse(language=user_input.language)
 

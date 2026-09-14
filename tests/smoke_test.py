@@ -10,12 +10,15 @@ from custom_components.perplexity_web.api import (
     PerplexityClient,
     SearchConfigItem,
 )
+from homeassistant.const import CONF_NAME
 from custom_components.perplexity_web.const import (
     CONF_MODEL_PREFERENCE,
+    CONF_PROMPT,
     CONF_REASONING,
     CONF_SEARCH_FOCUS,
     CONF_SESSION_TOKEN,
     DEFAULT_MODEL,
+    DEFAULT_PROMPT,
     DEFAULT_REASONING,
     DEFAULT_SEARCH_FOCUS,
     DOMAIN,
@@ -205,10 +208,16 @@ async def test_conversation_entity() -> None:
     entry.entry_id = "test_entry_1"
     entry.title = "Perplexity (test@example.com)"
     entry.options = {
+        CONF_PROMPT: "You are a concise assistant. Home: {{ ha_name }}.",
         CONF_MODEL_PREFERENCE: "sonar",
         CONF_SEARCH_FOCUS: "internet",
         CONF_REASONING: False,
     }
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config.location_name = "SweetHome"
+    hass.auth.async_get_user = AsyncMock(return_value=None)
 
     client = MagicMock(spec=PerplexityClient)
     client.ask_complete = AsyncMock(
@@ -216,6 +225,7 @@ async def test_conversation_entity() -> None:
     )
 
     entity = PerplexityWebConversationEntity(entry, client)
+    entity.hass = hass
 
     # Test single-turn
     user_input = ConversationInput(
@@ -258,6 +268,7 @@ async def test_conversation_entity() -> None:
 
     # Verify client received formatted multi-turn query
     call_query = client.ask_complete.call_args[0][0]
+    assert "System: You are a concise assistant. Home: SweetHome." in call_query
     assert "User: What is the capital of France?" in call_query
     assert "Assistant: Paris is the capital." in call_query
     assert "User: What is its population?" in call_query
@@ -320,11 +331,32 @@ async def test_config_and_options_flow() -> None:
             assert res3["type"] == "create_entry"
             assert res3["title"] == "Perplexity (user@example.com)"
             assert res3["data"][CONF_SESSION_TOKEN] == "final-session-token-xyz"
+    # 4. Multi-agent: create second agent reusing existing account
+    existing_entry = MagicMock()
+    existing_entry.data = {
+        CONF_EMAIL: "user@example.com",
+        CONF_SESSION_TOKEN: "final-session-token-xyz",
+    }
+    hass.config_entries.async_entries = MagicMock(return_value=[existing_entry])
 
-    # 4. Options flow
+    flow2 = PerplexityConfigFlow()
+    flow2.hass = hass
+    res_reuse = await flow2.async_step_user(
+        user_input={
+            "existing_account": "user@example.com",
+            CONF_NAME: "Research Agent",
+        }
+    )
+    assert res_reuse["type"] == "create_entry"
+    assert res_reuse["title"] == "Research Agent"
+    assert res_reuse["data"][CONF_SESSION_TOKEN] == "final-session-token-xyz"
+    assert res_reuse["options"][CONF_PROMPT] == DEFAULT_PROMPT
+
+    # 5. Options flow
     entry = MagicMock()
     entry.data = {CONF_SESSION_TOKEN: "final-session-token-xyz"}
     entry.options = {
+        CONF_PROMPT: "Be concise.",
         CONF_MODEL_PREFERENCE: DEFAULT_MODEL,
         CONF_SEARCH_FOCUS: DEFAULT_SEARCH_FOCUS,
         CONF_REASONING: DEFAULT_REASONING,
