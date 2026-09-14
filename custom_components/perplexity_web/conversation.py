@@ -36,20 +36,27 @@ async def async_setup_entry(
 ) -> None:
     """Set up Perplexity conversation entities."""
     client: PerplexityClient = hass.data[DOMAIN][entry.entry_id]
-    entities: list[PerplexityWebConversationEntity] = []
+    added = False
 
     subentries = getattr(entry, "subentries", None)
     if subentries:
         for subentry in subentries.values():
             if getattr(subentry, "subentry_type", None) == "conversation":
-                entities.append(
-                    PerplexityWebConversationEntity(entry, client, subentry=subentry)
+                entity = PerplexityWebConversationEntity(
+                    entry, client, subentry=subentry
                 )
+                try:
+                    async_add_entities(
+                        [entity], config_subentry_id=subentry.subentry_id
+                    )
+                except TypeError:
+                    async_add_entities([entity])
+                added = True
 
-    if not entities:
-        entities.append(PerplexityWebConversationEntity(entry, client, subentry=None))
-
-    async_add_entities(entities)
+    if not added:
+        async_add_entities(
+            [PerplexityWebConversationEntity(entry, client, subentry=None)]
+        )
 
 
 class PerplexityWebConversationEntity(

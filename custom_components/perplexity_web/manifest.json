@@ -7,5 +7,5 @@
   "issue_tracker": "https://github.com/veronoicc/perplexity-web-ha/issues",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "version": "1.2.2"
+  "version": "1.2.3"
 }
